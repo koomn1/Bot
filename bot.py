@@ -13,56 +13,54 @@ from telegram.ext import (
     filters,
 )
 
-# ================== إعدادات ==================
+# ================== تحميل المتغيرات ==================
 load_dotenv()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 
-API_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/"
-    f"models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-)
+# ================== إعداد HuggingFace ==================
+HF_API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill"
 
-HEADERS = {"Content-Type": "application/json"}
+HF_HEADERS = {
+    "Authorization": f"Bearer {HF_API_TOKEN}",
+    "Content-Type": "application/json",
+}
 
+# ================== إعدادات عامة ==================
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     level=logging.INFO
 )
 
-SYSTEM_PROMPT = """
-You are ZOZA, a professional AI assistant.
-Your responses are clear, concise, and accurate.
-Explain technical topics with simple examples.
-Remain professional unless the user uses casual language.
-Avoid repetition.
-If unsure, say so honestly.
-"""
+SYSTEM_PREFIX = (
+    "رد باللغة العربية وبأسلوب محترم وواضح. "
+    "لو السؤال تقني اشرح ببساطة.\n"
+)
 
 # أسماء البوت (عربي + إنجليزي)
 BOT_NAMES = ["zoza", "zoza bot", "زوزا"]
 
-# ================== ذاكرة ==================
-memory = defaultdict(lambda: deque(maxlen=12))
+# ================== ذاكرة + Rate limit ==================
+memory = defaultdict(lambda: deque(maxlen=6))
 last_request = defaultdict(float)
 MIN_DELAY = 1.2
 
 # ================== أوامر ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Welcome 👋\n"
-        "I'm ZOZA, your professional AI assistant.\n"
-        "Mention me or reply to my message in groups."
+        "أهلاً 👋\n"
+        "أنا زوزا 🤖 مساعد ذكي.\n"
+        "في الجروبات كلّمني بالمنشن أو اعمل Reply على كلامي."
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Usage:\n"
-        "- Mention @botname\n"
-        "- Reply to my message\n"
-        "- Or say: زوزا / zoza\n\n"
-        "Then send your question."
+        "طريقة الاستخدام:\n"
+        "- منشن @اسم_البوت\n"
+        "- أو Reply على رسالة البوت\n"
+        "- أو اكتب: زوزا / zoza\n"
+        "واسأل سؤالك مباشرة."
     )
 
 # ================== الرد الذكي ==================
@@ -87,36 +85,43 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---- Rate limit ----
     now = time.time()
     if now - last_request[user_id] < MIN_DELAY:
-        await message.reply_text(
-            "Please wait a moment before sending another message."
-        )
+        await message.reply_text("استنى ثانية كده 👀")
         return
     last_request[user_id] = now
 
     logging.info(f"User {user_id}: {text}")
 
-    # ---- الذاكرة ----
-    memory[user_id].append(f"User: {text}")
-    context_text = SYSTEM_PROMPT + "\n" + "\n".join(memory[user_id]) + "\nZOZA:"
+    # ---- ذاكرة بسيطة ----
+    memory[user_id].append(text)
+    context_text = " ".join(memory[user_id])
+
+    prompt = SYSTEM_PREFIX + context_text
 
     payload = {
-        "contents": [
-            {"parts": [{"text": context_text}]}
-        ]
+        "inputs": prompt
     }
 
     try:
-        r = requests.post(API_URL, headers=HEADERS, json=payload, timeout=25)
+        r = requests.post(
+            HF_API_URL,
+            headers=HF_HEADERS,
+            json=payload,
+            timeout=30
+        )
         r.raise_for_status()
-        reply_text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        data = r.json()
+
+        if isinstance(data, list) and "generated_text" in data[0]:
+            reply_text = data[0]["generated_text"]
+        else:
+            reply_text = "ممكن توضّح سؤالك شوية؟"
     except Exception as e:
         logging.error(e)
         reply_text = (
-            "The service is temporarily unavailable. "
-            "Please try again shortly."
+            "حاليًا في مشكلة مؤقتة في خدمة الرد 🤖\n"
+            "جرّب كمان شوية."
         )
 
-    memory[user_id].append(f"ZOZA: {reply_text}")
     await message.reply_text(reply_text)
 
 # ================== تشغيل ==================
@@ -127,11 +132,8 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply))
 
-    logging.info("ZOZA Bot running (GROUP SAFE MODE)")
+    logging.info("ZOZA Bot running (HUGGINGFACE MODE)")
     app.run_polling()
-
-if __name__ == "__main__":
-    main().run_polling()
 
 if __name__ == "__main__":
     main()

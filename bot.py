@@ -16,8 +16,8 @@ from telegram.ext import (
 # ================== إعدادات ==================
 load_dotenv()
 
-BOT_TOKEN = os.getenv("8048968788:AAF7kRRUom3zXNYEIO2lA9Hn2XHT5CKJs_g")
-GEMINI_API_KEY = os.getenv("AIzaSyAMFN0ET1v30_bU-4fUXzaxNVbjNVY4oUI")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 API_URL = (
     "https://generativelanguage.googleapis.com/v1beta/"
@@ -129,6 +129,9 @@ def main():
 
     logging.info("ZOZA Bot running (GROUP SAFE MODE)")
     app.run_polling()
+
+if __name__ == "__main__":
+    main().run_polling()
 
 if __name__ == "__main__":
     main()

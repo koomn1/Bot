@@ -20,7 +20,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 
 # ================== إعداد HuggingFace ==================
-HF_API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill"
+HF_API_URL = "https://api-inference.huggingface.co/models/google/mt5-small"
 
 HF_HEADERS = {
     "Authorization": f"Bearer {HF_API_TOKEN}",
@@ -34,15 +34,15 @@ logging.basicConfig(
 )
 
 SYSTEM_PREFIX = (
-    "رد باللغة العربية وبأسلوب محترم وواضح. "
-    "لو السؤال تقني اشرح ببساطة.\n"
+    "أجب باللغة العربية وبأسلوب محترم وواضح. "
+    "اشرح ببساطة، ولو السؤال تقني ادِ مثال.\n"
 )
 
 # أسماء البوت (عربي + إنجليزي)
 BOT_NAMES = ["zoza", "zoza bot", "زوزا"]
 
 # ================== ذاكرة + Rate limit ==================
-memory = defaultdict(lambda: deque(maxlen=6))
+memory = defaultdict(lambda: deque(maxlen=4))
 last_request = defaultdict(float)
 MIN_DELAY = 1.2
 
@@ -80,7 +80,7 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     has_name = any(name in text.lower() for name in BOT_NAMES)
 
     if is_group and not (is_reply or is_mention or has_name):
-        return  # تجاهل الكلام العادي في الجروب
+        return
 
     # ---- Rate limit ----
     now = time.time()
@@ -91,14 +91,14 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.info(f"User {user_id}: {text}")
 
-    # ---- ذاكرة بسيطة ----
+    # ---- ذاكرة قصيرة ----
     memory[user_id].append(text)
     context_text = " ".join(memory[user_id])
 
-    prompt = SYSTEM_PREFIX + context_text
+    prompt = f"{SYSTEM_PREFIX}{context_text}"
 
     payload = {
-        "inputs": prompt
+        "inputs": f"جاوب بالعربي وبوضوح:\n{prompt}"
     }
 
     try:
@@ -106,19 +106,20 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             HF_API_URL,
             headers=HF_HEADERS,
             json=payload,
-            timeout=30
+            timeout=45
         )
         r.raise_for_status()
         data = r.json()
 
-        if isinstance(data, list) and "generated_text" in data[0]:
-            reply_text = data[0]["generated_text"]
+        # mt5 بيرجع list غالبًا
+        if isinstance(data, list) and data and "generated_text" in data[0]:
+            reply_text = data[0]["generated_text"].strip()
         else:
             reply_text = "ممكن توضّح سؤالك شوية؟"
     except Exception as e:
         logging.error(e)
         reply_text = (
-            "حاليًا في مشكلة مؤقتة في خدمة الرد 🤖\n"
+            "حاليًا في ضغط على خدمة الرد 🤖\n"
             "جرّب كمان شوية."
         )
 
@@ -132,7 +133,7 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply))
 
-    logging.info("ZOZA Bot running (HUGGINGFACE MODE)")
+    logging.info("ZOZA Bot running (HUGGINGFACE MT5 MODE)")
     app.run_polling()
 
 if __name__ == "__main__":

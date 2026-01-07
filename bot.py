@@ -17,15 +17,20 @@ from telegram.ext import (
 load_dotenv()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# ================== إعداد HuggingFace ==================
-HF_API_URL = "https://api-inference.huggingface.co/models/google/mt5-small"
+# ================== OpenRouter ==================
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-HF_HEADERS = {
-    "Authorization": f"Bearer {HF_API_TOKEN}",
+HEADERS = {
+    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
     "Content-Type": "application/json",
+    "HTTP-Referer": "https://t.me/zoza_bot",
+    "X-Title": "ZOZA Telegram Bot"
 }
+
+# موديل مجاني
+MODEL = "mistralai/mistral-7b-instruct:free"
 
 # ================== إعدادات عامة ==================
 logging.basicConfig(
@@ -33,107 +38,82 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-SYSTEM_PREFIX = (
-    "أجب باللغة العربية وبأسلوب محترم وواضح. "
-    "اشرح ببساطة، ولو السؤال تقني ادِ مثال.\n"
+SYSTEM_PROMPT = (
+    "أنت مساعد ذكي اسمه زوزا. "
+    "ترد باللغة العربية، بأسلوب محترم وواضح. "
+    "اشرح ببساطة ولو السؤال تقني ادِ مثال."
 )
 
-# أسماء البوت (عربي + إنجليزي)
 BOT_NAMES = ["zoza", "zoza bot", "زوزا"]
 
-# ================== ذاكرة + Rate limit ==================
-memory = defaultdict(lambda: deque(maxlen=4))
+memory = defaultdict(lambda: deque(maxlen=6))
 last_request = defaultdict(float)
-MIN_DELAY = 1.2
+MIN_DELAY = 1.0
 
 # ================== أوامر ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "أهلاً 👋\n"
         "أنا زوزا 🤖 مساعد ذكي.\n"
-        "في الجروبات كلّمني بالمنشن أو اعمل Reply على كلامي."
+        "في الجروبات كلّمني بالمنشن أو اعمل Reply."
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "طريقة الاستخدام:\n"
+        "الاستخدام:\n"
         "- منشن @اسم_البوت\n"
         "- أو Reply على رسالة البوت\n"
-        "- أو اكتب: زوزا / zoza\n"
-        "واسأل سؤالك مباشرة."
+        "- أو اكتب: زوزا / zoza"
     )
 
 # ================== الرد الذكي ==================
 async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    user_id = message.from_user.id
-    text = message.text.strip()
+    msg = update.message
+    user_id = msg.from_user.id
+    text = msg.text.strip()
 
-    # ---- تحكم الجروبات ----
-    is_group = message.chat.type in ["group", "supergroup"]
-    is_reply = (
-        message.reply_to_message
-        and message.reply_to_message.from_user
-        and message.reply_to_message.from_user.is_bot
-    )
+    is_group = msg.chat.type in ["group", "supergroup"]
+    is_reply = msg.reply_to_message and msg.reply_to_message.from_user.is_bot
     is_mention = context.bot.username.lower() in text.lower()
-    has_name = any(name in text.lower() for name in BOT_NAMES)
+    has_name = any(n in text.lower() for n in BOT_NAMES)
 
     if is_group and not (is_reply or is_mention or has_name):
         return
 
-    # ---- Rate limit ----
     now = time.time()
     if now - last_request[user_id] < MIN_DELAY:
-        await message.reply_text("استنى ثانية كده 👀")
+        await msg.reply_text("استنى ثانية 👀")
         return
     last_request[user_id] = now
 
-    logging.info(f"User {user_id}: {text}")
-
-    # ---- ذاكرة قصيرة ----
     memory[user_id].append(text)
-    context_text = " ".join(memory[user_id])
-
-    prompt = f"{SYSTEM_PREFIX}{context_text}"
 
     payload = {
-        "inputs": f"جاوب بالعربي وبوضوح:\n{prompt}"
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": " ".join(memory[user_id])}
+        ],
+        "temperature": 0.7
     }
 
     try:
-        r = requests.post(
-            HF_API_URL,
-            headers=HF_HEADERS,
-            json=payload,
-            timeout=45
-        )
+        r = requests.post(OPENROUTER_URL, headers=HEADERS, json=payload, timeout=30)
         r.raise_for_status()
-        data = r.json()
-
-        # mt5 بيرجع list غالبًا
-        if isinstance(data, list) and data and "generated_text" in data[0]:
-            reply_text = data[0]["generated_text"].strip()
-        else:
-            reply_text = "ممكن توضّح سؤالك شوية؟"
+        reply_text = r.json()["choices"][0]["message"]["content"]
     except Exception as e:
         logging.error(e)
-        reply_text = (
-            "حاليًا في ضغط على خدمة الرد 🤖\n"
-            "جرّب كمان شوية."
-        )
+        reply_text = "حصلت مشكلة مؤقتة، جرّب تاني كمان شوية."
 
-    await message.reply_text(reply_text)
+    await msg.reply_text(reply_text)
 
 # ================== تشغيل ==================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply))
-
-    logging.info("ZOZA Bot running (HUGGINGFACE MT5 MODE)")
+    logging.info("ZOZA Bot running (OPENROUTER MODE)")
     app.run_polling()
 
 if __name__ == "__main__":

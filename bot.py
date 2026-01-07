@@ -15,22 +15,15 @@ from telegram.ext import (
 
 # ================== تحميل المتغيرات ==================
 load_dotenv()
-
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# ================== OpenRouter ==================
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-HEADERS = {
-    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://t.me/zoza_bot",
-    "X-Title": "ZOZA Telegram Bot"
-}
-
-# موديل مجاني
-MODEL = "mistralai/mistral-7b-instruct:free"
+# ================== إعداد Gemini ==================
+API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/"
+    f"models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+)
+HEADERS = {"Content-Type": "application/json"}
 
 # ================== إعدادات عامة ==================
 logging.basicConfig(
@@ -40,30 +33,34 @@ logging.basicConfig(
 
 SYSTEM_PROMPT = (
     "أنت مساعد ذكي اسمه زوزا. "
-    "ترد باللغة العربية، بأسلوب محترم وواضح. "
-    "اشرح ببساطة ولو السؤال تقني ادِ مثال."
+    "ترد باللغة العربية فقط، بأسلوب محترم وواضح. "
+    "اشرح ببساطة، ولو السؤال تقني ادِ مثال. "
+    "تجنب خلط الإنجليزية بالعربية."
 )
 
+# أسماء البوت (عربي + إنجليزي)
 BOT_NAMES = ["zoza", "zoza bot", "زوزا"]
 
+# ذاكرة قصيرة + Rate limit
 memory = defaultdict(lambda: deque(maxlen=6))
 last_request = defaultdict(float)
-MIN_DELAY = 1.0
+MIN_DELAY = 1.2
 
 # ================== أوامر ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "أهلاً 👋\n"
         "أنا زوزا 🤖 مساعد ذكي.\n"
-        "في الجروبات كلّمني بالمنشن أو اعمل Reply."
+        "في الجروبات كلّمني بالمنشن أو اعمل Reply على كلامي."
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "الاستخدام:\n"
         "- منشن @اسم_البوت\n"
-        "- أو Reply على رسالة البوت\n"
-        "- أو اكتب: زوزا / zoza"
+        "- Reply على رسالة البوت\n"
+        "- أو اكتب: زوزا / zoza\n"
+        "واسأل سؤالك."
     )
 
 # ================== الرد الذكي ==================
@@ -72,6 +69,7 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = msg.from_user.id
     text = msg.text.strip()
 
+    # ---- تحكم الجروبات ----
     is_group = msg.chat.type in ["group", "supergroup"]
     is_reply = msg.reply_to_message and msg.reply_to_message.from_user.is_bot
     is_mention = context.bot.username.lower() in text.lower()
@@ -80,30 +78,36 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_group and not (is_reply or is_mention or has_name):
         return
 
+    # ---- Rate limit ----
     now = time.time()
     if now - last_request[user_id] < MIN_DELAY:
         await msg.reply_text("استنى ثانية 👀")
         return
     last_request[user_id] = now
 
+    logging.info(f"User {user_id}: {text}")
+
+    # ---- ذاكرة ----
     memory[user_id].append(text)
+    prompt = SYSTEM_PROMPT + "\nسؤال المستخدم:\n" + " ".join(memory[user_id])
 
     payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": " ".join(memory[user_id])}
-        ],
-        "temperature": 0.7
+        "contents": [
+            {"parts": [{"text": prompt}]}
+        ]
     }
 
     try:
-        r = requests.post(OPENROUTER_URL, headers=HEADERS, json=payload, timeout=30)
+        r = requests.post(API_URL, headers=HEADERS, json=payload, timeout=30)
         r.raise_for_status()
-        reply_text = r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        reply_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
         logging.error(e)
-        reply_text = "حصلت مشكلة مؤقتة، جرّب تاني كمان شوية."
+        reply_text = (
+            "حاليًا خدمة الذكاء الاصطناعي مش متاحة 🤖\n"
+            "جرّب كمان شوية أو صيّغ سؤالك بشكل أبسط."
+        )
 
     await msg.reply_text(reply_text)
 
@@ -113,7 +117,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply))
-    logging.info("ZOZA Bot running (OPENROUTER MODE)")
+    logging.info("ZOZA Bot running (GEMINI 1.5 FLASH)")
     app.run_polling()
 
 if __name__ == "__main__":
